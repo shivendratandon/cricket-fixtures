@@ -1,14 +1,18 @@
-from datetime import datetime,timezone
 import requests
 import json
 import io
-import sys    
+import sys
+from datetime import datetime,timezone
+import os
+import google_calendar
+
+DATA_FOLDER = os.path.join(os.path.dirname(os.path.realpath(__file__)),'data')
 
 def download_fixtures_file(teamname):
-    url_file = open('data/urls.json','r')
+    url_file = open(os.path.join(DATA_FOLDER,'metadata.json'),'r')
     url_data = json.load(url_file)
     try:
-        url = url_data['url'].replace('id',str(url_data['team_id'][teamname]))
+        url = url_data['url'].replace('id',str(url_data['teams'][teamname]['id']))
     except KeyError:
         print("Ïnvalid team name")
         sys.exit(0)
@@ -18,7 +22,6 @@ def download_fixtures_file(teamname):
     except requests.ConnectionError:
         print("No internet. Retrieving offline data...\n")
         return io.StringIO()
-    
 
 def get_fixtures_data(teamname):
     team_file = download_fixtures_file(teamname)
@@ -34,21 +37,40 @@ def get_list(fixture_data,value_to_get):
             value_list.append(line[len(value_to_get)+1:])
     return value_list
 
-def convert_to_datetime(dt_string):
-    year = int(dt_string[:4])
-    month = int(dt_string[4:6])
-    day = int(dt_string[6:8])
-    hour = int(dt_string[9:11])
-    minute = int(dt_string[11:13])
-    seconds = int(dt_string[13:15])
-    return datetime(year,month,day,hour,minute,seconds,tzinfo=timezone.utc)
-
 def get_datetime_list(fixture_data,value_to_get):
     dt_string_list = get_list(fixture_data,value_to_get)
+    date_format = '%Y%m%dT%H%M%SZ'
     datetime_list=[]
     for dt_string in dt_string_list:
-        datetime_list.append(convert_to_datetime(dt_string).replace(tzinfo=timezone.utc).astimezone(tz=None))
+        datetime_list.append(datetime.strptime(dt_string,date_format).isoformat('T'))
     return datetime_list
+
+def save_fixtures(teamname,fixtures_json):
+
+    saved_fixtures_json = json.load(open(os.path.join(DATA_FOLDER,teamname+'.json'),'r'))
+
+    event_id_dict = {}
+
+    for saved_fixture in saved_fixtures_json:
+        if 'event_id' in saved_fixture:
+            event_id_dict[saved_fixture['Summary']] = saved_fixture['event_id']
+
+    for i in range(len(fixtures_json)):
+        if fixtures_json[i]['Summary'] in event_id_dict:
+            fixtures_json[i]['event_id'] = event_id_dict[fixtures_json[i]['Summary']]
+
+    with open(os.path.join(DATA_FOLDER,teamname+'.json'),'w') as fixtures_file:
+        json.dump(fixtures_json,fixtures_file)
+    fixtures_file.close()
+    return fixtures_json
+
+def get_offline_fixtures(teamname):
+    try:
+        fixtures_file = open(os.path.join(DATA_FOLDER,teamname+'.json'),'r')
+        return json.load(fixtures_file)
+    except FileNotFoundError:
+        print("Sorry! No offline data currently available for "+teamname)
+        sys.exit(0)
 
 def get_fixtures(teamname):
     fixture_data = get_fixtures_data(teamname)
@@ -61,11 +83,11 @@ def get_fixtures(teamname):
         for i in range(len(summaries)):
             fixture = {}
             fixture['Summary'] = summaries[i]
-            fixture['Start Time'] = start_times[i].strftime("%d %B %Y, %I:%M %p")
-            fixture['End Time'] = end_times[i].strftime("%d %B %Y, %I:%M %p")
+            fixture['Start Time'] = start_times[i]
+            fixture['End Time'] = end_times[i]
             fixture['Venue'] = venues[i]
             fixtures.append(fixture)
-        save_fixtures(teamname,fixtures)
+        fixtures = save_fixtures(teamname,fixtures)
         return fixtures
     else:
         return get_offline_fixtures(teamname)
@@ -76,30 +98,50 @@ def print_fixtures(fixtures_json):
             print("No data to display")
         for fixture in fixtures_json:
             print(fixture['Summary'])
-            print("Start Time: "+ fixture['Start Time'])
-            print("End Time: "+ fixture['End Time'])
+            date_format = '%Y-%m-%dT%H:%M:%S'
+            print("Start Time: "+ datetime.strptime(fixture['Start Time'],date_format).replace(tzinfo=timezone.utc).astimezone(tz=None).strftime("%d %B %Y, %I:%M %p"))
+            print("End Time: "+ datetime.strptime(fixture['End Time'],date_format).replace(tzinfo=timezone.utc).astimezone(tz=None).strftime("%d %B %Y, %I:%M %p"))
             print("Venue: "+fixture['Venue']+"\n")
     except TypeError:
         print("No data to display")
 
-def save_fixtures(teamname,fixtures_json):
-    with open('data/'+teamname+'.json','w') as fixtures_file:
+def google_calendar_events(fixtures_json,teamname):
+    
+    metadata_file = open(os.path.join(DATA_FOLDER,'metadata.json'),'r')
+    metadata = json.load(metadata_file)
+
+    fixture_data = {}
+    fixture_data['colorId'] = metadata['teams'][teamname]['calendar_color']
+    fixture_data['fixtures'] = fixtures_json
+
+    try:
+        fixture_data['calendarId'] = metadata['calendarId']
+        if input('Login to another calendar?(y/n)').lower() == 'y':
+            metadata['calendarId'] = google_calendar.create_calendar(relogin=True)
+            fixture_data['calendarId'] = metadata['calendarId']
+    except KeyError:
+        metadata['calendarId'] = google_calendar.create_calendar(relogin=False)
+        fixture_data['calendarId'] = metadata['calendarId']
+
+    with open(os.path.join(DATA_FOLDER,'metadata.json'),'w') as metadata_file:
+        json.dump(metadata,metadata_file)
+    
+    event_ids = google_calendar.create_update_events(fixture_data)
+
+    for i in range(len(fixtures_json)):
+        fixtures_json[i]['event_id'] = event_ids[i]
+
+    with open(os.path.join(DATA_FOLDER,teamname+'.json'),'w') as fixtures_file:
         json.dump(fixtures_json,fixtures_file)
     fixtures_file.close()
-
-def get_offline_fixtures(teamname):
-    try:
-        fixtures_file = open('data/'+teamname+'.json','r')
-        return json.load(fixtures_file)
-    except FileNotFoundError:
-        print("Sorry! No offline data currently available for "+teamname)
-        sys.exit(0)
 
 def main():
     teamname = input('Enter team name: ').lower()
     while(teamname.lower() != 'q'):
         fixtures_json = get_fixtures(teamname)
         print_fixtures(fixtures_json)
+        if(input('Add to/Update Google Calendar? (y/n)').lower() == 'y'):
+            google_calendar_events(fixtures_json,teamname)
         teamname = input('Enter team name(Q to Quit): ').lower()
 
 main()
