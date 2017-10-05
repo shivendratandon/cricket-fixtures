@@ -105,9 +105,8 @@ def print_fixtures(fixtures_json):
     except TypeError:
         print("No data to display")
 
-def google_calendar_events(fixtures_json,teamname):
-    
-    metadata_file = open(os.path.join(DATA_FOLDER,'metadata.json'),'r')
+def google_calendar_init(fixtures_json,teamname):
+    metadata_file = open(os.path.join(DATA_FOLDER, 'metadata.json'), 'r')
     metadata = json.load(metadata_file)
 
     fixture_data = {}
@@ -116,32 +115,36 @@ def google_calendar_events(fixtures_json,teamname):
 
     try:
         fixture_data['calendarId'] = metadata['calendarId']
-        if input('Login to another calendar?(y/n)').lower() == 'y':
-            metadata['calendarId'] = google_calendar.create_calendar(relogin=True)
+        google_calendar.get_logged_in_user()
+        if input('Login as another user?(y/n)').lower() == 'y':
+            metadata['calendarId'] = google_calendar.get_calendar(True)
             fixture_data['calendarId'] = metadata['calendarId']
     except KeyError:
-        metadata['calendarId'] = google_calendar.create_calendar(relogin=False)
+        metadata['calendarId'] = google_calendar.get_calendar(None)
         fixture_data['calendarId'] = metadata['calendarId']
 
-    with open(os.path.join(DATA_FOLDER,'metadata.json'),'w') as metadata_file:
-        json.dump(metadata,metadata_file)
-    
-    event_ids = google_calendar.create_update_events(fixture_data)
+    with open(os.path.join(DATA_FOLDER, 'metadata.json'), 'w') as metadata_file:
+        json.dump(metadata, metadata_file)
 
-    for i in range(len(fixtures_json)):
-        fixtures_json[i]['event_id'] = event_ids[i]
+    return fixture_data
 
-    with open(os.path.join(DATA_FOLDER,teamname+'.json'),'w') as fixtures_file:
-        json.dump(fixtures_json,fixtures_file)
-    fixtures_file.close()
 
 def main():
     teamname = input('Enter team name: ').lower()
     while(teamname.lower() != 'q'):
         fixtures_json = get_fixtures(teamname)
         print_fixtures(fixtures_json)
-        if(input('Add to/Update Google Calendar? (y/n)').lower() == 'y'):
-            google_calendar_events(fixtures_json,teamname)
+        calendar_choice = input('GOOGLE CALENDAR:\n' +
+                                '1. Add to/Update Google Calendar\n' +
+                                '2. Delete from Google Calendar\n' +
+                                'Enter Choice(1,2) or press Enter to continue')
+        if calendar_choice == '1' or calendar_choice == '2':
+            events_json = google_calendar_init(fixtures_json,teamname)
+            if calendar_choice == '1':
+                google_calendar.create_update_events(events_json)
+            elif calendar_choice == '2':
+                google_calendar.delete_events(events_json)
+
         teamname = input('Enter team name(Q to Quit): ').lower()
 
 main()

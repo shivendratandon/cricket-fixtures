@@ -15,7 +15,7 @@ def get_credentials(relogin):
     except ImportError:
         flags = None
 
-    SCOPES = 'https://www.googleapis.com/auth/calendar'
+    SCOPES = 'https://www.googleapis.com/auth/calendar https://www.googleapis.com/auth/userinfo.email'
     CLIENT_SECRET_FILE = 'client_secret.json'
     APPLICATION_NAME = 'Cricket Fixtures'
 
@@ -35,28 +35,36 @@ def get_credentials(relogin):
             print("Stored ceredentials")
     return credentials
 
-def get_list(calendar_id):
-    
-    credentials = get_credentials()
+def get_logged_in_user():
+
+    credentials = get_credentials(False)
+    http = credentials.authorize(httplib2.Http())
+    service = discovery.build('plus', 'v1', http=http)
+
+    user = service.people().get(userId='me').execute()
+    print("Logged in as " + user['displayName'] + "(" + user['emails'][0]['value'] + ")")
+
+
+def get_calendar(relogin):
+
+    credentials = get_credentials(relogin)
     http = credentials.authorize(httplib2.Http())
     service = discovery.build('calendar', 'v3', http=http)
 
-    now = datetime.datetime.utcnow().isoformat() + 'Z' # 'Z' indicates UTC time
-    print('Getting the upcoming 10 events')
-    eventsResult = service.events().list(
-        calendarId=calendar_id, timeMin=now, maxResults=10, singleEvents=True,
-        orderBy='startTime').execute()
-    events = eventsResult.get('items', [])
+    page_token = None
+    while True:
+        calendar_list = service.calendarList().list(pageToken=page_token).execute()
+        for calendar in calendar_list['items']:
+            if calendar['summary'] == 'Cricket Fixtures':
+                return calendar['id']
+        page_token = calendar_list.get('nextPageToken')
+        if not page_token:
+            break
+    return create_calendar()
 
-    if not events:
-        print('No upcoming events found.')
-    for event in events:
-        start = event['start'].get('dateTime', event['start'].get('date'))
-        print(start, event['summary'])
+def create_calendar():
 
-def create_calendar(relogin):
-
-    credentials = get_credentials(relogin)
+    credentials = get_credentials(False)
     http = credentials.authorize(httplib2.Http())
     service = discovery.build('calendar', 'v3', http=http)
 
@@ -68,20 +76,53 @@ def create_calendar(relogin):
 
 def create_update_events(events_json):
 
-    credentials = get_credentials(None)
+    credentials = get_credentials(False)
     http = credentials.authorize(httplib2.Http())
     service = discovery.build('calendar', 'v3', http=http)
 
-    event_ids = []
+    calendar_id = events_json['calendarId']
+    color_id = events_json['colorId']
+
+    event_dict = get_event_list(calendar_id)
 
     for event_json in events_json['fixtures']:
-        if 'event_id' in event_json:
-            event_id = update_event(service,events_json['calendarId'],event_json, events_json['colorId'])
+        if event_json['Summary'] in event_dict:
+            update_event(service, calendar_id, event_dict[event_json['Summary']], event_json, color_id)
         else:
-            event_id = create_event(service, events_json['calendarId'], event_json, events_json['colorId'])
-        event_ids.append(event_id)
+            create_event(service, calendar_id, event_json, color_id)
 
-    return event_ids
+def delete_events(events_json):
+
+    credentials = get_credentials(False)
+    http = credentials.authorize(httplib2.Http())
+    service = discovery.build('calendar', 'v3', http=http)
+
+    calendar_id = events_json['calendarId']
+
+    event_dict = get_event_list(calendar_id)
+
+    for event_json in events_json['fixtures']:
+        if event_json['Summary'] in event_dict:
+            delete_event(service,calendar_id,event_dict[event_json['Summary']])
+            print('Event Deleted: %s' % event_json['Summary'])
+
+def get_event_list(calendar_id):
+
+    credentials = get_credentials(False)
+    http = credentials.authorize(httplib2.Http())
+    service = discovery.build('calendar', 'v3', http=http)
+
+    now = datetime.datetime.utcnow().isoformat() + 'Z'  # 'Z' indicates UTC time
+    page_token = None
+    event_dict = {}
+    while True:
+        events = service.events().list(calendarId=calendar_id, timeMin=now, pageToken=page_token).execute()
+        for event in events['items']:
+            event_dict[event['summary']] = event['id']
+        page_token = events.get('nextPageToken')
+        if not page_token:
+            break
+    return event_dict
 
 def create_event(service,calendar_id,event_json,color_id):
 
@@ -99,17 +140,21 @@ def create_event(service,calendar_id,event_json,color_id):
     event['end']['dateTime'] = event_json['End Time']
     event['end']['timeZone'] = 'UTC'
 
+    event['reminders'] = {}
+    event['reminders']['useDefault'] = False
+    event['reminders']['overrides'] = [
+      {'method': 'popup', 'minutes': 10}
+    ]
+
     created_event = service.events().insert(calendarId=calendar_id, body=event).execute()
-    print('Event created: %s' % created_event['id'])
-
-    return created_event['id']
+    print('Event created: %s' % created_event['summary'])
 
 
-def update_event(service,calendar_id,event_json,color_id):
+def update_event(service,calendar_id,event_id,event_json,color_id):
 
     from googleapiclient.errors import HttpError
     try:
-        event = service.events().get(calendarId=calendar_id,eventId=event_json['event_id']).execute()
+        event = service.events().get(calendarId=calendar_id,eventId=event_id).execute()
     except HttpError:
         return create_event(service,calendar_id,event_json,color_id)
 
@@ -125,15 +170,18 @@ def update_event(service,calendar_id,event_json,color_id):
     if not 'end' in event or event['end']['dateTime'] != event_json['End Time'] + 'Z':
         event['end']['dateTime'] = event_json['End Time']
         changes = True
+    if event['reminders']['useDefault'] == True:
+        event['reminders']['useDefault'] = False
+        event['reminders']['overrides'] = [
+            {'method': 'popup', 'minutes': 10}
+        ]
+        changes = True
 
     if changes:
-        updated_event = service.events().update(calendarId=calendar_id,eventId=event_json['event_id'],body=event).execute()
-        print('Event Updated: %s' % updated_event['id'])
-        return updated_event['id']
+        updated_event = service.events().update(calendarId=calendar_id,eventId=event_id,body=event).execute()
+        print('Event Updated: %s' % updated_event['summary'])
     else:
-        print("No updation needed")
-        return event_json['event_id']
-
+        print("%s: No updation needed" % event_json['Summary'])
 
 def delete_event(service,calendar_id,event_id):
     service.events().delete(calendarId=calendar_id, eventId=event_id).execute()
