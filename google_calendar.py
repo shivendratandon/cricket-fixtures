@@ -30,9 +30,14 @@ def get_credentials(relogin):
     if not credentials or credentials.invalid or relogin:
         flow = client.flow_from_clientsecrets(CLIENT_SECRET_FILE, SCOPES)
         flow.user_agent = APPLICATION_NAME
-        if flags:
-            credentials = tools.run_flow(flow, store, flags)
-            print("Stored ceredentials")
+        reauth = True
+        while flags and reauth:
+            try:
+                credentials = tools.run_flow(flow, store, flags)
+                print("Successfully authenticated. Stored ceredentials.")
+                reauth = False
+            except:
+                reauth = input("Authentication failed! Retry?(y/n)").lower() == 'y'
     return credentials
 
 def get_logged_in_user():
@@ -84,6 +89,7 @@ def create_update_events(events_json):
     color_id = events_json['colorId']
 
     event_dict = get_event_list(calendar_id)
+
 
     for event_json in events_json['fixtures']:
         if event_json['Summary'] in event_dict:
