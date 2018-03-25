@@ -46,14 +46,15 @@ def get_datetime_list(fixture_data,value_to_get):
     return datetime_list
 
 def save_fixtures(teamname,fixtures_json):
-
-    saved_fixtures_json = json.load(open(os.path.join(DATA_FOLDER,teamname+'.json'),'r'))
-
     event_id_dict = {}
+    try:
+        saved_fixtures_json = json.load(open(os.path.join(DATA_FOLDER,teamname+'.json'),'r'))
 
-    for saved_fixture in saved_fixtures_json:
-        if 'event_id' in saved_fixture:
-            event_id_dict[saved_fixture['Summary']] = saved_fixture['event_id']
+        for saved_fixture in saved_fixtures_json:
+            if 'event_id' in saved_fixture:
+                event_id_dict[saved_fixture['Summary']] = saved_fixture['event_id']
+    except FileNotFoundError:
+        event_id_dict = {}
 
     for i in range(len(fixtures_json)):
         if fixtures_json[i]['Summary'] in event_id_dict:
