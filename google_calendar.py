@@ -15,7 +15,7 @@ def get_credentials(relogin):
     except ImportError:
         flags = None
 
-    SCOPES = 'https://www.googleapis.com/auth/calendar https://www.googleapis.com/auth/userinfo.email'
+    SCOPES = 'https://www.googleapis.com/auth/calendar https://www.googleapis.com/auth/userinfo.email https://www.googleapis.com/auth/userinfo.profile'
     CLIENT_SECRET_FILE = 'client_secret.json'
     APPLICATION_NAME = 'Cricket Fixtures'
 
@@ -34,7 +34,7 @@ def get_credentials(relogin):
         while flags and reauth:
             try:
                 credentials = tools.run_flow(flow, store, flags)
-                print("Successfully authenticated. Stored ceredentials.")
+                print("Successfully authenticated. Stored credentials.")
                 reauth = False
             except:
                 reauth = input("Authentication failed! Retry?(y/n)").lower() == 'y'
@@ -44,10 +44,10 @@ def get_logged_in_user():
 
     credentials = get_credentials(False)
     http = credentials.authorize(httplib2.Http())
-    service = discovery.build('plus', 'v1', http=http)
+    service = discovery.build('people', 'v1', http=http)
 
-    user = service.people().get(userId='me').execute()
-    print("Logged in as " + user['displayName'] + "(" + user['emails'][0]['value'] + ")")
+    user = service.people().get(resourceName='people/me', personFields='emailAddresses,names').execute()
+    print("Logged in as " + user['names'][0]['displayName'] + "(" + user['emailAddresses'][0]['value'] + ")")
 
 
 def get_calendar(relogin):
